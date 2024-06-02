@@ -43,9 +43,14 @@ like this
 ### Sample Output
 
 ```
-Comparing: dictionary='0ae59ed3a84c4e78b3cdc7b483da3d5a', generated='69a329523ce1ec88bf63061863d9cb14'
-Comparing: dictionary='47c7f26eea02b53f49937fc90bef32a6', generated='69a329523ce1ec88bf63061863d9cb14'
-`Match found! Entry: 'hello'`
+Comparing: dictionary='07787964a1e74335c923a46348e1e865', generated='5d41402abc4b2a76b9719d911017c592'
+Comparing: dictionary='0acf4539a14b3aa27deeb4cbdf6e989f', generated='5d41402abc4b2a76b9719d911017c592'
+Comparing: dictionary='2345f10bb948c5665ef91f6773b3e455', generated='5d41402abc4b2a76b9719d911017c592'
+Comparing: dictionary='00bfc8c729f5d4d529a412b12c58ddd2', generated='5d41402abc4b2a76b9719d911017c592'
+Comparing: dictionary='aae039d6aa239cfc121357a825210fa3', generated='5d41402abc4b2a76b9719d911017c592'
+Comparing: dictionary='5badcaf789d3d1d09794d8f021f40f0e', generated='5d41402abc4b2a76b9719d911017c592'
+Comparing: dictionary='5d41402abc4b2a76b9719d911017c592', generated='5d41402abc4b2a76b9719d911017c592'
+Match found! Entry: 'hello'
 ```
 
 ## Contributing
