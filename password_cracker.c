@@ -13,31 +13,36 @@ const char *key_range[] = {
     "21E1CDE6", "C33707D6"
 };
 
+// ANSI color codes for enhanced terminal output
+#define RED "\033[1;31m"
+#define GREEN "\033[1;32m"
+#define YELLOW "\033[1;33m"
+#define BLUE "\033[1;34m"
+#define RESET "\033[0m"
+
 // Function to calculate MD5 hash with optional salting
 void compute_md5(const char *input, const char *key, char output[33]) {
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
     if (!ctx) {
-        fprintf(stderr, "Error: Unable to create EVP_MD_CTX\n");
+        fprintf(stderr, RED "Error: Unable to create EVP_MD_CTX\n" RESET);
         exit(EXIT_FAILURE);
     }
 
     if (EVP_DigestInit_ex(ctx, EVP_md5(), NULL) != 1) {
-        fprintf(stderr, "Error: Digest initialization failed\n");
+        fprintf(stderr, RED "Error: Digest initialization failed\n" RESET);
         EVP_MD_CTX_free(ctx);
         exit(EXIT_FAILURE);
     }
 
-    // Update digest with the input string
     if (EVP_DigestUpdate(ctx, input, strlen(input)) != 1) {
-        fprintf(stderr, "Error: Digest update failed for input\n");
+        fprintf(stderr, RED "Error: Digest update failed for input\n" RESET);
         EVP_MD_CTX_free(ctx);
         exit(EXIT_FAILURE);
     }
 
-    // If a key is provided, include it in the hash
     if (key && strlen(key) > 0) {
         if (EVP_DigestUpdate(ctx, key, strlen(key)) != 1) {
-            fprintf(stderr, "Error: Digest update failed for key\n");
+            fprintf(stderr, RED "Error: Digest update failed for key\n" RESET);
             EVP_MD_CTX_free(ctx);
             exit(EXIT_FAILURE);
         }
@@ -45,12 +50,11 @@ void compute_md5(const char *input, const char *key, char output[33]) {
 
     unsigned char hash[MD5_DIGEST_LENGTH];
     if (EVP_DigestFinal_ex(ctx, hash, NULL) != 1) {
-        fprintf(stderr, "Error: Digest finalization failed\n");
+        fprintf(stderr, RED "Error: Digest finalization failed\n" RESET);
         EVP_MD_CTX_free(ctx);
         exit(EXIT_FAILURE);
     }
 
-    // Convert the binary hash to a hexadecimal string
     for (int i = 0; i < MD5_DIGEST_LENGTH; ++i) {
         snprintf(&output[i * 2], 3, "%02x", hash[i]);
     }
@@ -63,7 +67,7 @@ void compute_md5(const char *input, const char *key, char output[33]) {
 int process_dictionary(const char *filename, const char *user_hash, int is_hashed) {
     FILE *file = fopen(filename, "r");
     if (!file) {
-        perror("Error opening dictionary file");
+        perror(RED "Error opening dictionary file" RESET);
         return 0;
     }
 
@@ -72,25 +76,21 @@ int process_dictionary(const char *filename, const char *user_hash, int is_hashe
     int found = 0;
 
     while (fgets(line, sizeof(line), file)) {
-        // Remove newline character
-        line[strcspn(line, "\n")] = '\0';
+        line[strcspn(line, "\n")] = '\0';  // Remove newline character
 
         if (is_hashed) {
-            // Compare directly with the user's hash
             if (strcmp(line, user_hash) == 0) {
                 found = 1;
-                printf("Match found! Hash: '%s'\n", line);
+                printf(GREEN "Match found! Hash: '%s'\n" RESET, line);
                 break;
             }
         } else {
-            // Generate and compare hashes with keys
             for (int i = 0; i < sizeof(key_range) / sizeof(key_range[0]); ++i) {
                 compute_md5(line, key_range[i], generated_hash);
-                printf("Checking: %s (key: %s)\n", generated_hash, key_range[i]);
 
                 if (strcmp(generated_hash, user_hash) == 0) {
                     found = 1;
-                    printf("Match found! Entry: '%s', Key: '%s'\n", line, key_range[i]);
+                    printf(GREEN "Match found! Entry: '%s', Key: '%s'\n" RESET, line, key_range[i]);
                     break;
                 }
             }
@@ -103,9 +103,13 @@ int process_dictionary(const char *filename, const char *user_hash, int is_hashe
     return found;
 }
 
+void print_usage(const char *program_name) {
+    printf(YELLOW "Usage: %s <dictionary_path> <is_hashed (0 or 1)> <user_input> <is_input_hashed (0 or 1)>\n" RESET, program_name);
+}
+
 int main(int argc, char *argv[]) {
     if (argc != 5) {
-        fprintf(stderr, "Usage: %s <dictionary_path> <is_hashed (0 or 1)> <user_input> <is_input_hashed (0 or 1)>\n", argv[0]);
+        print_usage(argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -115,19 +119,17 @@ int main(int argc, char *argv[]) {
     int is_input_hashed = atoi(argv[4]);
     char user_hash[33];
 
-    // Generate hash if the user input is plaintext
     if (!is_input_hashed) {
         compute_md5(input, "", user_hash);
-        printf("Generated hash for input '%s': %s\n", input, user_hash);
+        printf(BLUE "Generated hash for input '%s': %s\n" RESET, input, user_hash);
     } else {
         strncpy(user_hash, input, 33);
-        user_hash[32] = '\0'; // Ensure null-termination
+        user_hash[32] = '\0';  // Ensure null-termination
     }
 
-    // Process the dictionary and look for a match
-    printf("\nProcessing dictionary...\n");
+    printf(BLUE "\nProcessing dictionary...\n" RESET);
     if (!process_dictionary(dictionary_path, user_hash, is_hashed)) {
-        printf("No match found.\n");
+        printf(RED "No match found.\n" RESET);
     }
 
     return EXIT_SUCCESS;
