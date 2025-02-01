@@ -2,7 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <openssl/md5.h>
+#include <openssl/sha.h>
 #include <openssl/evp.h>
+#include <pthread.h>
+#include <time.h>
 
 // Predefined key range for salting the hash
 const char *key_range[] = {
@@ -13,6 +16,9 @@ const char *key_range[] = {
     "21E1CDE6", "C33707D6"
 };
 
+// Number of keys in the key_range array
+const int key_range_size = sizeof(key_range) / sizeof(key_range[0]);
+
 // ANSI color codes for enhanced terminal output
 #define RED "\033[1;31m"
 #define GREEN "\033[1;32m"
@@ -20,15 +26,34 @@ const char *key_range[] = {
 #define BLUE "\033[1;34m"
 #define RESET "\033[0m"
 
-// Function to calculate MD5 hash with optional salting
-void compute_md5(const char *input, const char *key, char output[33]) {
+// Thread-safe variables
+pthread_mutex_t lock;
+int found = 0;
+
+// Struct to pass arguments to threads
+typedef struct {
+    const char *filename;
+    const char *user_hash;
+    int is_hashed;
+    const char *algorithm;
+} ThreadArgs;
+
+// Function to calculate hash using the specified algorithm
+void compute_hash(const char *input, const char *key, const char *algorithm, char output[65]) {
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
     if (!ctx) {
         fprintf(stderr, RED "Error: Unable to create EVP_MD_CTX\n" RESET);
         exit(EXIT_FAILURE);
     }
 
-    if (EVP_DigestInit_ex(ctx, EVP_md5(), NULL) != 1) {
+    const EVP_MD *md = EVP_get_digestbyname(algorithm);
+    if (!md) {
+        fprintf(stderr, RED "Error: Unsupported hash algorithm '%s'\n" RESET, algorithm);
+        EVP_MD_CTX_free(ctx);
+        exit(EXIT_FAILURE);
+    }
+
+    if (EVP_DigestInit_ex(ctx, md, NULL) != 1) {
         fprintf(stderr, RED "Error: Digest initialization failed\n" RESET);
         EVP_MD_CTX_free(ctx);
         exit(EXIT_FAILURE);
@@ -48,67 +73,78 @@ void compute_md5(const char *input, const char *key, char output[33]) {
         }
     }
 
-    unsigned char hash[MD5_DIGEST_LENGTH];
-    if (EVP_DigestFinal_ex(ctx, hash, NULL) != 1) {
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hash_len;
+    if (EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
         fprintf(stderr, RED "Error: Digest finalization failed\n" RESET);
         EVP_MD_CTX_free(ctx);
         exit(EXIT_FAILURE);
     }
 
-    for (int i = 0; i < MD5_DIGEST_LENGTH; ++i) {
+    for (unsigned int i = 0; i < hash_len; ++i) {
         snprintf(&output[i * 2], 3, "%02x", hash[i]);
     }
-    output[32] = '\0';
+    output[hash_len * 2] = '\0';
 
     EVP_MD_CTX_free(ctx);
 }
 
-// Function to process the dictionary file
-int process_dictionary(const char *filename, const char *user_hash, int is_hashed) {
-    FILE *file = fopen(filename, "r");
+// Function to check if a line matches the user hash
+int check_match(const char *line, const char *user_hash, int is_hashed, const char *algorithm) {
+    if (is_hashed) {
+        return strcmp(line, user_hash) == 0;
+    } else {
+        for (int i = 0; i < key_range_size; ++i) {
+            char generated_hash[65];
+            compute_hash(line, key_range[i], algorithm, generated_hash);
+
+            if (strcmp(generated_hash, user_hash) == 0) {
+                printf(GREEN "Match found! Entry: '%s', Key: '%s'\n" RESET, line, key_range[i]);
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+// Thread function to process a portion of the dictionary file
+void *process_dictionary_thread(void *args) {
+    ThreadArgs *thread_args = (ThreadArgs *)args;
+    FILE *file = fopen(thread_args->filename, "r");
     if (!file) {
         perror(RED "Error opening dictionary file" RESET);
-        return 0;
+        return NULL;
     }
 
     char line[256];
-    char generated_hash[33];
-    int found = 0;
-
     while (fgets(line, sizeof(line), file)) {
         line[strcspn(line, "\n")] = '\0';  // Remove newline character
 
-        if (is_hashed) {
-            if (strcmp(line, user_hash) == 0) {
-                found = 1;
-                printf(GREEN "Match found! Hash: '%s'\n" RESET, line);
-                break;
-            }
-        } else {
-            for (int i = 0; i < sizeof(key_range) / sizeof(key_range[0]); ++i) {
-                compute_md5(line, key_range[i], generated_hash);
-
-                if (strcmp(generated_hash, user_hash) == 0) {
-                    found = 1;
-                    printf(GREEN "Match found! Entry: '%s', Key: '%s'\n" RESET, line, key_range[i]);
-                    break;
-                }
-            }
+        pthread_mutex_lock(&lock);
+        if (found) {
+            pthread_mutex_unlock(&lock);
+            break;
         }
+        pthread_mutex_unlock(&lock);
 
-        if (found) break;
+        if (check_match(line, thread_args->user_hash, thread_args->is_hashed, thread_args->algorithm)) {
+            pthread_mutex_lock(&lock);
+            found = 1;
+            pthread_mutex_unlock(&lock);
+            break;
+        }
     }
 
     fclose(file);
-    return found;
+    return NULL;
 }
 
 void print_usage(const char *program_name) {
-    printf(YELLOW "Usage: %s <dictionary_path> <is_hashed (0 or 1)> <user_input> <is_input_hashed (0 or 1)>\n" RESET, program_name);
+    printf(YELLOW "Usage: %s <dictionary_path> <is_hashed (0 or 1)> <user_input> <is_input_hashed (0 or 1)> <algorithm (md5/sha256)>\n" RESET, program_name);
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 5) {
+    if (argc != 6) {
         print_usage(argv[0]);
         return EXIT_FAILURE;
     }
@@ -117,18 +153,58 @@ int main(int argc, char *argv[]) {
     int is_hashed = atoi(argv[2]);
     const char *input = argv[3];
     int is_input_hashed = atoi(argv[4]);
-    char user_hash[33];
+    const char *algorithm = argv[5];
+
+    // Validate is_hashed and is_input_hashed flags
+    if ((is_hashed != 0 && is_hashed != 1) || (is_input_hashed != 0 && is_input_hashed != 1)) {
+        fprintf(stderr, RED "Error: is_hashed and is_input_hashed must be 0 or 1.\n" RESET);
+        return EXIT_FAILURE;
+    }
+
+    // Validate algorithm
+    if (strcmp(algorithm, "md5") != 0 && strcmp(algorithm, "sha256") != 0) {
+        fprintf(stderr, RED "Error: Unsupported algorithm. Use 'md5' or 'sha256'.\n" RESET);
+        return EXIT_FAILURE;
+    }
+
+    char user_hash[65];
 
     if (!is_input_hashed) {
-        compute_md5(input, "", user_hash);
+        compute_hash(input, "", algorithm, user_hash);
         printf(BLUE "Generated hash for input '%s': %s\n" RESET, input, user_hash);
     } else {
-        strncpy(user_hash, input, 33);
-        user_hash[32] = '\0';  // Ensure null-termination
+        strncpy(user_hash, input, 65);
+        user_hash[64] = '\0';  // Ensure null-termination
     }
 
     printf(BLUE "\nProcessing dictionary...\n" RESET);
-    if (!process_dictionary(dictionary_path, user_hash, is_hashed)) {
+
+    // Initialize mutex
+    if (pthread_mutex_init(&lock, NULL) != 0) {
+        fprintf(stderr, RED "Error: Mutex initialization failed\n" RESET);
+        return EXIT_FAILURE;
+    }
+
+    // Create threads
+    pthread_t threads[4];
+    ThreadArgs thread_args = {dictionary_path, user_hash, is_hashed, algorithm};
+
+    for (int i = 0; i < 4; ++i) {
+        if (pthread_create(&threads[i], NULL, process_dictionary_thread, &thread_args) != 0) {
+            fprintf(stderr, RED "Error: Thread creation failed\n" RESET);
+            return EXIT_FAILURE;
+        }
+    }
+
+    // Wait for threads to finish
+    for (int i = 0; i < 4; ++i) {
+        pthread_join(threads[i], NULL);
+    }
+
+    // Clean up mutex
+    pthread_mutex_destroy(&lock);
+
+    if (!found) {
         printf(RED "No match found.\n" RESET);
     }
 
